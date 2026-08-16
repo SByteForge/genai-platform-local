@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: localstack
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: localstack
+    app.kubernetes.io/part-of: local-ai-platform
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # LocalStack keeps in-process state; two replicas would diverge
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: localstack
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: localstack
+        app.kubernetes.io/part-of: local-ai-platform
+    spec:
+      containers:
+        - name: localstack
+          image: localstack/localstack:3.7 # free/community image, no license key
+          ports:
+            - name: edge
+              containerPort: 4566
+          env:
+            - name: SERVICES
+              value: "s3,dynamodb"
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: 1, memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /_localstack/health, port: 4566 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: localstack
+  namespace: platform
+spec:
+  selector:
+    app.kubernetes.io/name: localstack
+  ports:
+    - name: edge
+      port: 4566
+      targetPort: 4566

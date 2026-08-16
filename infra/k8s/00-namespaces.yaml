@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+  labels:
+    kubernetes.io/metadata.name: platform
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dev
+  labels:
+    kubernetes.io/metadata.name: dev
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qa
+  labels:
+    kubernetes.io/metadata.name: qa
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+  labels:
+    kubernetes.io/metadata.name: prod
