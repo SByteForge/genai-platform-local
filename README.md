@@ -8,6 +8,10 @@ real platform: isolated `dev`/`qa`/`prod` environments, shared backing
 services, least-privilege RBAC, and a GitHub Actions CI/CD pipeline that
 builds, pushes, and deploys an immutable image per commit.
 
+📄 **[Read the design doc](docs/DESIGN.md)** — architecture decisions,
+alternatives considered, and two real bugs found by testing this against a
+live cluster (not just written and assumed correct).
+
 ## Why this exists
 
 Most "local AI demo" repos are a single script that calls an API. This is
