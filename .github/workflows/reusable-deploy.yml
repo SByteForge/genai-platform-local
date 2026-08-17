@@ -3,11 +3,20 @@ name: Reusable - Deploy to Local Kind Cluster
 # Runs on a self-hosted runner registered on the machine that owns the local
 # "genai-platform-local" kind cluster — GitHub-hosted runners cannot reach it.
 #
-# Governance note: this currently uses the runner's default (admin) kubeconfig
-# context. The least-privilege target is a kubeconfig scoped to each app's
-# own <app>-deployer ServiceAccount (infra/k8s/rbac/<app>/<env>/), stored as
-# a per-app repo secret — not wired up yet, tracked as a follow-up so it's
-# not silently forgotten.
+# Governance: the actual `helm upgrade` runs against a kubeconfig scoped to
+# this app's own <app>-deployer ServiceAccount (infra/k8s/rbac/<app>/<env>/),
+# generated fresh each run from that ServiceAccount's token Secret — not the
+# runner's admin config. Verified for real (not assumed) against a live
+# cluster: see infra/k8s/rbac/rag-platform-api/dev/role.yaml for what that
+# Role actually needed to make `helm upgrade --wait` work end to end.
+#
+# Two steps stay on the runner's admin context rather than the scoped
+# identity, deliberately: applying this app's own RBAC (an identity can't
+# grant itself permissions — only a platform-level identity can provision
+# a new app's Role/RoleBinding), and the smoke-test pod (`kubectl run`
+# needs `create` on pods, which can't be resourceNames-scoped — granting
+# it to the app's identity would let it create arbitrary pods, not just
+# its own). Everything else — the deploy itself — uses the scoped identity.
 
 on:
   workflow_call:
@@ -49,14 +58,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Apply app RBAC (ServiceAccount/Role/RoleBinding for this app+env)
+      - name: Apply app RBAC (ServiceAccount/Role/RoleBinding/token for this app+env)
         run: |
           kubectl config use-context kind-genai-platform-local
           kubectl apply -f "infra/k8s/rbac/${{ inputs.app_name }}/${{ inputs.environment }}/"
 
-      - name: Helm upgrade --install
+      - name: Generate scoped kubeconfig for this app+environment
         run: |
           kubectl config use-context kind-genai-platform-local
+          python3 infra/scripts/generate-scoped-kubeconfig.py \
+            "${{ inputs.app_name }}" "${{ inputs.environment }}" \
+            "${{ runner.temp }}/scoped-kubeconfig.yaml"
+
+      - name: Helm upgrade --install (scoped identity)
+        env:
+          KUBECONFIG: ${{ runner.temp }}/scoped-kubeconfig.yaml
+        run: |
           helm upgrade --install "${{ inputs.app_name }}-${{ inputs.environment }}" "${{ inputs.chart_path }}" \
             --namespace "${{ inputs.environment }}" \
             --values "${{ inputs.values_file }}" \
@@ -66,11 +83,18 @@ jobs:
             --set image.tag="${{ inputs.image_tag }}" \
             --wait --timeout 3m
 
-      - name: Rollout status
+      - name: Rollout status (scoped identity)
+        env:
+          KUBECONFIG: ${{ runner.temp }}/scoped-kubeconfig.yaml
         run: kubectl rollout status "deployment/${{ inputs.app_name }}-${{ inputs.environment }}" -n "${{ inputs.environment }}"
 
       - name: Smoke test
         run: |
+          kubectl config use-context kind-genai-platform-local
           kubectl run "smoke-${{ inputs.app_name }}-${{ inputs.environment }}" \
             --rm -i --restart=Never --image=curlimages/curl -n "${{ inputs.environment }}" -- \
             curl -sf "http://${{ inputs.app_name }}-${{ inputs.environment }}.${{ inputs.environment }}.svc.cluster.local${{ inputs.health_path }}"
+
+      - name: Clean up scoped kubeconfig
+        if: always()
+        run: rm -f "${{ runner.temp }}/scoped-kubeconfig.yaml"

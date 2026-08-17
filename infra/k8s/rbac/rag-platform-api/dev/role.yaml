@@ -1,7 +1,21 @@
 # Least-privilege: every object this app's Helm release creates, scoped by
 # resourceNames to only the objects named rag-platform-api-dev* — never a
 # bare wildcard. If app-b also deployed into this namespace, this Role could
-# not touch app-b's objects.
+# not get/update/delete app-b's objects.
+#
+# IMPORTANT, found by actually testing this against a live Helm deploy (not
+# assumed): Kubernetes RBAC's resourceNames only restricts verbs that target
+# one named object in the request URL — get, update, patch, delete. list and
+# watch operate on the whole collection (no name in the request), so the API
+# server denies them outright when combined with resourceNames — there's
+# nothing to compare against. create has the same problem in reverse: the
+# object doesn't exist yet, so there's no name to check, and Kubernetes does
+# NOT restrict create by resourceNames at all (it's silently permitted for
+# any name). Net effect: this Role genuinely stops this app from reading or
+# modifying another app's *existing* objects (the realistic accidental-
+# cross-app-damage case), but core RBAC alone cannot stop it from *creating*
+# a wrongly-named object in this namespace — that needs an admission
+# controller (Kyverno/OPA), deliberately out of scope for now (see README).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -10,24 +24,44 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["services", "serviceaccounts"]
+    verbs: ["list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
     resourceNames: ["rag-platform-api-dev"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames: ["rag-platform-api-dev"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     resourceNames: ["rag-platform-api-dev"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     resourceNames: ["rag-platform-api-dev"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     resourceNames: ["rag-platform-api-dev-table-init"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
   # Pods: read-only, no resourceNames — pod names carry a random suffix
   # Helm/kubectl can't predict, and this is observation only (no delete/exec).
   - apiGroups: [""]
@@ -36,6 +70,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  # ReplicaSets: read-only. Helm v4's status watcher (kstatus) follows the
+  # Deployment -> ReplicaSet -> Pod ownership chain to determine true
+  # rollout status, not just the Deployment's own status conditions — found
+  # by testing `helm upgrade --wait` with this Role and watching it hang
+  # ("actualStatus=Unknown") until this was added.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+
   # Known gap, documented rather than hidden: Helm stores its own release
   # history as Secrets named sh.helm.release.v1.<release>.v<revision> — the
   # revision number can't be known in advance, so resourceNames can't scope

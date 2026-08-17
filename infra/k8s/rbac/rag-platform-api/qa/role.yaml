@@ -1,3 +1,7 @@
+# See dev/role.yaml for the full explanation of why list/watch/create and
+# get/update/patch/delete are split into separate rules (resourceNames only
+# restricts verbs targeting one named object) and why replicasets are here
+# (Helm v4's kstatus wait follows Deployment -> ReplicaSet -> Pod).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -6,30 +10,54 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["services", "serviceaccounts"]
+    verbs: ["list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
     resourceNames: ["rag-platform-api-qa"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["apps"]
     resources: ["deployments"]
     resourceNames: ["rag-platform-api-qa"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers"]
     resourceNames: ["rag-platform-api-qa"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
     resourceNames: ["rag-platform-api-qa"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "watch", "create"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     resourceNames: ["rag-platform-api-qa-table-init"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+    verbs: ["get", "update", "patch", "delete"]
+
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list", "watch"]
+
   # See dev/role.yaml for why Secrets can't be resourceNames-scoped (Helm's
   # own revision-numbered release secrets).
   - apiGroups: [""]
