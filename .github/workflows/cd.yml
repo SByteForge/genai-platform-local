@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       environment: ${{ steps.map.outputs.environment }}
+      image_name: ${{ steps.lower.outputs.image_name }}
     steps:
       - id: map
         run: |
@@ -26,12 +27,16 @@ jobs:
             qa) echo "environment=qa" >> "$GITHUB_OUTPUT" ;;
             main) echo "environment=prod" >> "$GITHUB_OUTPUT" ;;
           esac
+      - id: lower
+        # GHCR requires a lowercase repository path; github.repository preserves
+        # the owner's actual case (e.g. SByteForge), which Docker rejects as a tag.
+        run: echo "image_name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
   build-push:
     needs: resolve-env
     uses: ./.github/workflows/reusable-build-push.yml
     with:
-      image_name: ${{ github.repository }}
+      image_name: ${{ needs.resolve-env.outputs.image_name }}
       image_tag: ${{ needs.resolve-env.outputs.environment }}-${{ github.sha }}
 
   deploy:
@@ -41,5 +46,5 @@ jobs:
       environment: ${{ needs.resolve-env.outputs.environment }}
       app_name: rag-platform-api
       values_file: deploy/environments/${{ needs.resolve-env.outputs.environment }}/values.yaml
-      image_repository: ghcr.io/${{ github.repository }}
+      image_repository: ghcr.io/${{ needs.resolve-env.outputs.image_name }}
       image_tag: ${{ needs.resolve-env.outputs.environment }}-${{ github.sha }}
