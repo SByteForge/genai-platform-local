@@ -5,7 +5,7 @@ metadata:
   namespace: platform
   labels:
     app.kubernetes.io/name: localstack
-    app.kubernetes.io/part-of: local-ai-platform
+    app.kubernetes.io/part-of: genai-platform-local
 spec:
   replicas: 1
   strategy:
@@ -17,7 +17,7 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: localstack
-        app.kubernetes.io/part-of: local-ai-platform
+        app.kubernetes.io/part-of: genai-platform-local
     spec:
       containers:
         - name: localstack

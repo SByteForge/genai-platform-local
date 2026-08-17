@@ -8,7 +8,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-CLUSTER_NAME = "local-ai-platform"
+CLUSTER_NAME = "genai-platform-local"
 SCRIPT_DIR = Path(__file__).resolve().parent
 INFRA_DIR = SCRIPT_DIR.parent
 

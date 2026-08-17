@@ -2,7 +2,7 @@ appName: rag-platform-api
 environment: qa
 
 image:
-  repository: ghcr.io/OWNER/REPO
+  repository: ghcr.io/SByteForge/genai-platform-local
   tag: latest
   pullPolicy: IfNotPresent
 

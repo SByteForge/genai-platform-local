@@ -5,7 +5,7 @@ appName: my-app
 environment: dev
 
 image:
-  repository: ghcr.io/CHANGEME/CHANGEME
+  repository: ghcr.io/SByteForge/genai-platform-local
   tag: latest
   pullPolicy: IfNotPresent
 

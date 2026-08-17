@@ -1,7 +1,7 @@
 name: Reusable - Deploy to Local Kind Cluster
 
 # Runs on a self-hosted runner registered on the machine that owns the local
-# "local-ai-platform" kind cluster — GitHub-hosted runners cannot reach it.
+# "genai-platform-local" kind cluster — GitHub-hosted runners cannot reach it.
 #
 # Governance note: this currently uses the runner's default (admin) kubeconfig
 # context. The least-privilege target is a kubeconfig scoped to each app's
@@ -51,12 +51,12 @@ jobs:
 
       - name: Apply app RBAC (ServiceAccount/Role/RoleBinding for this app+env)
         run: |
-          kubectl config use-context kind-local-ai-platform
+          kubectl config use-context kind-genai-platform-local
           kubectl apply -f "infra/k8s/rbac/${{ inputs.app_name }}/${{ inputs.environment }}/"
 
       - name: Helm upgrade --install
         run: |
-          kubectl config use-context kind-local-ai-platform
+          kubectl config use-context kind-genai-platform-local
           helm upgrade --install "${{ inputs.app_name }}-${{ inputs.environment }}" "${{ inputs.chart_path }}" \
             --namespace "${{ inputs.environment }}" \
             --values "${{ inputs.values_file }}" \
