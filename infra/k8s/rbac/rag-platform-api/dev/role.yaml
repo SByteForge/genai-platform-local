@@ -1,0 +1,47 @@
+# Least-privilege: every object this app's Helm release creates, scoped by
+# resourceNames to only the objects named rag-platform-api-dev* — never a
+# bare wildcard. If app-b also deployed into this namespace, this Role could
+# not touch app-b's objects.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: rag-platform-api-deployer
+  namespace: dev
+rules:
+  - apiGroups: [""]
+    resources: ["services", "serviceaccounts"]
+    resourceNames: ["rag-platform-api-dev"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: ["rag-platform-api-dev"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    resourceNames: ["rag-platform-api-dev"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    resourceNames: ["rag-platform-api-dev"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    resourceNames: ["rag-platform-api-dev-table-init"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Pods: read-only, no resourceNames — pod names carry a random suffix
+  # Helm/kubectl can't predict, and this is observation only (no delete/exec).
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # Known gap, documented rather than hidden: Helm stores its own release
+  # history as Secrets named sh.helm.release.v1.<release>.v<revision> — the
+  # revision number can't be known in advance, so resourceNames can't scope
+  # this the way it scopes everything else above. Acceptable while this
+  # namespace holds one app; revisit (e.g. a dedicated Helm storage backend,
+  # or per-app namespaces) before a second app shares "dev".
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

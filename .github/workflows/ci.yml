@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, qa, main]
+  push:
+    branches: [dev, qa, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r app/requirements.txt
+
+      - name: Import sanity check
+        run: python -c "import sys; sys.path.insert(0, 'app'); import main"
+
+      - uses: azure/setup-helm@v4
+
+      - run: helm lint infra/helm/app-chart --values deploy/environments/dev/values.yaml
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

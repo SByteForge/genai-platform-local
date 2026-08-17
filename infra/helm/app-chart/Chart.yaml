@@ -1,0 +1,6 @@
+apiVersion: v2
+name: app-chart
+description: Unified, reusable Helm chart for deploying any stateless HTTP service (dev/qa/prod) on the shared local-ai-platform infra
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

@@ -1,0 +1,31 @@
+# NOTE: kind's default CNI (kindnetd) does not enforce NetworkPolicy — this
+# object will be accepted by the API server but has no runtime effect until
+# a policy-aware CNI (e.g. Calico) replaces kindnetd. Written now because
+# it's correct and portable (a real cluster's CNI usually does enforce it);
+# not worth adding Calico's complexity just to activate it on a local kind
+# cluster today. Revisit if/when this platform targets a real cluster.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: localstack-allow-app-namespaces
+  namespace: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: localstack
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dev
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: qa
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: prod
+      ports:
+        - protocol: TCP
+          port: 4566

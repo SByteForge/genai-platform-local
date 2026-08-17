@@ -1,0 +1,76 @@
+name: Reusable - Deploy to Local Kind Cluster
+
+# Runs on a self-hosted runner registered on the machine that owns the local
+# "local-ai-platform" kind cluster — GitHub-hosted runners cannot reach it.
+#
+# Governance note: this currently uses the runner's default (admin) kubeconfig
+# context. The least-privilege target is a kubeconfig scoped to each app's
+# own <app>-deployer ServiceAccount (infra/k8s/rbac/<app>/<env>/), stored as
+# a per-app repo secret — not wired up yet, tracked as a follow-up so it's
+# not silently forgotten.
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "dev | qa | prod"
+        required: true
+        type: string
+      app_name:
+        required: true
+        type: string
+      values_file:
+        description: "Path (relative to repo root) to the environment's Helm values file"
+        required: true
+        type: string
+      chart_path:
+        required: false
+        type: string
+        default: infra/helm/app-chart
+      image_repository:
+        required: true
+        type: string
+      image_tag:
+        required: true
+        type: string
+      health_path:
+        required: false
+        type: string
+        default: /health
+      runner_label:
+        required: false
+        type: string
+        default: self-hosted
+
+jobs:
+  deploy:
+    runs-on: ${{ inputs.runner_label }}
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply app RBAC (ServiceAccount/Role/RoleBinding for this app+env)
+        run: |
+          kubectl config use-context kind-local-ai-platform
+          kubectl apply -f "infra/k8s/rbac/${{ inputs.app_name }}/${{ inputs.environment }}/"
+
+      - name: Helm upgrade --install
+        run: |
+          kubectl config use-context kind-local-ai-platform
+          helm upgrade --install "${{ inputs.app_name }}-${{ inputs.environment }}" "${{ inputs.chart_path }}" \
+            --namespace "${{ inputs.environment }}" \
+            --values "${{ inputs.values_file }}" \
+            --set appName="${{ inputs.app_name }}" \
+            --set environment="${{ inputs.environment }}" \
+            --set image.repository="${{ inputs.image_repository }}" \
+            --set image.tag="${{ inputs.image_tag }}" \
+            --wait --timeout 3m
+
+      - name: Rollout status
+        run: kubectl rollout status "deployment/${{ inputs.app_name }}-${{ inputs.environment }}" -n "${{ inputs.environment }}"
+
+      - name: Smoke test
+        run: |
+          kubectl run "smoke-${{ inputs.app_name }}-${{ inputs.environment }}" \
+            --rm -i --restart=Never --image=curlimages/curl -n "${{ inputs.environment }}" -- \
+            curl -sf "http://${{ inputs.app_name }}-${{ inputs.environment }}.${{ inputs.environment }}.svc.cluster.local${{ inputs.health_path }}"

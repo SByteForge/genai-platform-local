@@ -47,6 +47,10 @@ def apply_manifests() -> None:
     print("Applying platform services (LocalStack, host-Ollama passthrough)...")
     run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "localstack.yaml"))
     run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "ollama.yaml"))
+    run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "networkpolicy.yaml"))
+
+    print("Applying platform RBAC (platform-deployer only, no app has access here)...")
+    run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "rbac" / "platform"))
 
     print("Waiting for LocalStack to be ready...")
     run(

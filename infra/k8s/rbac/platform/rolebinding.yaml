@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-deployer
+  namespace: platform
+subjects:
+  - kind: ServiceAccount
+    name: platform-deployer
+    namespace: platform
+roleRef:
+  kind: Role
+  name: platform-deployer
+  apiGroup: rbac.authorization.k8s.io

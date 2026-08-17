@@ -1,0 +1,42 @@
+appName: rag-platform-api
+environment: qa
+
+image:
+  repository: ghcr.io/OWNER/REPO
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 75
+
+env:
+  - name: AWS_ENDPOINT_URL
+    value: "http://localstack.platform.svc.cluster.local:4566"
+  - name: AWS_DEFAULT_REGION
+    value: "us-east-1"
+  - name: AWS_ACCESS_KEY_ID
+    value: "test"
+  - name: AWS_SECRET_ACCESS_KEY
+    value: "test"
+  - name: TABLE_NAME
+    value: "documents-qa"
+  - name: OLLAMA_URL
+    value: "http://ollama.platform.svc.cluster.local:11434"
+  - name: OLLAMA_MODEL
+    value: "mistral"
+
+tableInit:
+  enabled: true

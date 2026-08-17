@@ -1,0 +1,57 @@
+# Defaults for app-chart. Each environment overrides a subset via
+# deploy/environments/<env>/values.yaml.
+
+appName: my-app
+environment: dev
+
+image:
+  repository: ghcr.io/CHANGEME/CHANGEME
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+containerPort: 8000
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: nginx
+  host: my-app.local
+  path: /
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 75
+
+probes:
+  path: /health
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+env: []
+  # - name: TABLE_NAME
+  #   value: documents
+
+envFromSecretRefs: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+tableInit:
+  enabled: false
+  image: amazon/aws-cli:2.17.62

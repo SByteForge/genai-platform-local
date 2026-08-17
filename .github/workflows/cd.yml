@@ -1,0 +1,45 @@
+name: CD
+
+# Branch -> environment mapping:
+#   dev  -> dev   (auto)
+#   qa   -> qa    (auto)
+#   main -> prod  (auto, gate with a GitHub Environment protection rule)
+
+on:
+  push:
+    branches: [dev, qa, main]
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-env:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.map.outputs.environment }}
+    steps:
+      - id: map
+        run: |
+          case "${{ github.ref_name }}" in
+            dev) echo "environment=dev" >> "$GITHUB_OUTPUT" ;;
+            qa) echo "environment=qa" >> "$GITHUB_OUTPUT" ;;
+            main) echo "environment=prod" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  build-push:
+    needs: resolve-env
+    uses: ./.github/workflows/reusable-build-push.yml
+    with:
+      image_name: ${{ github.repository }}
+      image_tag: ${{ needs.resolve-env.outputs.environment }}-${{ github.sha }}
+
+  deploy:
+    needs: [resolve-env, build-push]
+    uses: ./.github/workflows/reusable-deploy.yml
+    with:
+      environment: ${{ needs.resolve-env.outputs.environment }}
+      app_name: rag-platform-api
+      values_file: deploy/environments/${{ needs.resolve-env.outputs.environment }}/values.yaml
+      image_repository: ghcr.io/${{ github.repository }}
+      image_tag: ${{ needs.resolve-env.outputs.environment }}-${{ github.sha }}

@@ -1,0 +1,24 @@
+# Governance registry entry for rag-platform-api. Single source of truth for
+# what this app is allowed to touch — RBAC objects under infra/k8s/rbac/ and
+# the NetworkPolicy allowlists in infra/k8s/platform/ are derived from this.
+repository: OWNER/local-ai-platform # single repo for now; splits out later unchanged
+app: rag-platform-api
+
+environments:
+  dev:
+    namespace: dev
+  qa:
+    namespace: qa
+  prod:
+    namespace: prod
+
+platformResources:
+  dynamodb:
+    tables:
+      - documents-dev
+      - documents-qa
+      - documents-prod
+  s3:
+    buckets: []
+  ollama:
+    access: true

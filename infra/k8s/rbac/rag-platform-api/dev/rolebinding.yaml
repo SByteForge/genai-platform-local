@@ -1,0 +1,16 @@
+# Environment access grant: this binding existing in "dev" is what makes dev
+# an approved environment for this app. No binding = no access — RBAC is
+# deny-by-default, so denying qa/prod is just "don't create that binding".
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: rag-platform-api-deployer
+  namespace: dev
+subjects:
+  - kind: ServiceAccount
+    name: rag-platform-api-deployer
+    namespace: dev
+roleRef:
+  kind: Role
+  name: rag-platform-api-deployer
+  apiGroup: rbac.authorization.k8s.io
