@@ -59,6 +59,36 @@ def apply_manifests() -> None:
     )
 
 
+def install_metrics_server() -> None:
+    print("Installing metrics-server (needed for HPA to see real CPU usage)...")
+    run(
+        "kubectl", "apply", "-f",
+        "https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml",
+    )
+    # kind's kubelet certs aren't signed for the hostname metrics-server expects
+    # by default; --kubelet-insecure-tls is the standard local-cluster workaround.
+    run(
+        "kubectl", "patch", "deployment", "metrics-server", "-n", "kube-system",
+        "--type=json",
+        "-p=[{\"op\":\"add\",\"path\":\"/spec/template/spec/containers/0/args/-\",\"value\":\"--kubelet-insecure-tls\"}]",
+        check=False,  # no-op (and returns nonzero) if already patched
+    )
+    run("kubectl", "rollout", "status", "deployment/metrics-server", "-n", "kube-system", "--timeout=90s")
+
+
+def install_ingress_nginx() -> None:
+    print("Installing ingress-nginx (kind-specific manifest, uses the hostPorts from kind-config.yaml)...")
+    run(
+        "kubectl", "apply", "-f",
+        "https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml",
+    )
+    run(
+        "kubectl", "wait", "--namespace", "ingress-nginx",
+        "--for=condition=ready", "pod", "--selector=app.kubernetes.io/component=controller",
+        "--timeout=180s",
+    )
+
+
 def check_host_ollama() -> None:
     print("Checking host Ollama is reachable...")
     try:
@@ -77,11 +107,14 @@ def main() -> None:
 
     create_cluster()
     apply_manifests()
+    install_metrics_server()
+    install_ingress_nginx()
     check_host_ollama()
 
     print(
         f"Done. Cluster '{CLUSTER_NAME}' ready: "
-        "namespaces platform/dev/qa/prod, LocalStack + Ollama up."
+        "namespaces platform/dev/qa/prod, LocalStack + Ollama, "
+        "metrics-server, and ingress-nginx up."
     )
 
 

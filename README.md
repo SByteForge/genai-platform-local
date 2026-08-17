@@ -49,6 +49,20 @@ Kubernetes DNS (`localstack.platform.svc.cluster.local`,
 `ollama.platform.svc.cluster.local`) — never `localhost`, so the same app
 code runs unmodified in any environment.
 
+Each environment is also reachable through `ingress-nginx` at its own
+hostname, routed by the `kind-config.yaml` port mapping (host `:8080` →
+node `:80`). Add these to `/etc/hosts` to browse them directly:
+
+```
+127.0.0.1 dev.api.local
+127.0.0.1 qa.api.local
+127.0.0.1 prod.api.local
+```
+
+Then, e.g., `curl http://dev.api.local:8080/health`. Without the
+`/etc/hosts` entries, the same routing can be exercised with an explicit
+Host header: `curl -H "Host: dev.api.local" http://localhost:8080/health`.
+
 ## Components
 
 | Layer | Technology | Why |
@@ -59,6 +73,8 @@ code runs unmodified in any environment.
 | Packaging | Helm | One chart, three environments, values-driven |
 | Governance | Kubernetes RBAC | Per-app, per-environment least privilege — see below |
 | CI/CD | GitHub Actions | Hosted runner builds/tests/pushes; self-hosted runner deploys locally |
+| Ingress | ingress-nginx | Host-based routing (`dev/qa/prod.api.local`) to each environment |
+| Autoscaling data | metrics-server | Gives the HPAs real CPU data (`kind` doesn't ship this by default) |
 
 ## Environments
 
@@ -155,11 +171,19 @@ deploy/environments/          per-environment Helm values (dev/qa/prod)
 
 ## Status
 
-Phases 1–4 (cluster, platform services, Helm chart, RBAC governance) are
-built and verified live. CI/CD workflows are written but not yet exercised
-against a real GitHub remote; a self-hosted runner is not yet registered.
-See open items in the project history before treating this as a finished
-enterprise platform — it's a working foundation, not a claim of completeness.
+`dev` and `qa` are fully built and verified live end to end: cluster,
+platform services, Helm chart, RBAC (proven with `kubectl auth can-i`),
+Ingress, autoscaling with real metrics, and a working CI/CD pipeline —
+push → GitHub Actions CI → multi-platform image → GHCR → self-hosted
+runner → Helm → running pod, all actually exercised, not just written.
+
+Not yet done: `main`/`prod` hasn't been promoted (deliberately held for one
+combined release); branch protection rules on `qa`/`main` aren't configured;
+the CD workflow still deploys using the self-hosted runner's own kubeconfig
+rather than each app's scoped `ServiceAccount` token (documented in
+`reusable-deploy.yml`); `NetworkPolicy` is written but inert under `kind`'s
+default CNI. None of these block current functionality — they're the
+explicit remaining work before calling this enterprise-complete.
 
 ## License
 

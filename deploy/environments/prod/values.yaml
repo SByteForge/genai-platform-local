@@ -2,11 +2,17 @@ appName: rag-platform-api
 environment: prod
 
 image:
-  repository: ghcr.io/SByteForge/genai-platform-local
+  repository: ghcr.io/sbyteforge/genai-platform-local
   tag: latest
   pullPolicy: IfNotPresent
 
 replicaCount: 3
+
+ingress:
+  enabled: true
+  className: nginx
+  host: prod.api.local
+  path: /
 
 resources:
   requests:

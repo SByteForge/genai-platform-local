@@ -8,6 +8,12 @@ image:
 
 replicaCount: 1
 
+ingress:
+  enabled: true
+  className: nginx
+  host: dev.api.local
+  path: /
+
 resources:
   requests:
     cpu: 25m
