@@ -1,22 +1,24 @@
-name: Reusable - Deploy to Local Kind Cluster
+name: Reusable - Deploy to Local Kind Cluster (GitOps via ArgoCD)
 
 # Runs on a self-hosted runner registered on the machine that owns the local
 # "genai-platform-local" kind cluster — GitHub-hosted runners cannot reach it.
 #
-# Governance: the actual `helm upgrade` runs against a kubeconfig scoped to
-# this app's own <app>-deployer ServiceAccount (infra/k8s/rbac/<app>/<env>/),
-# generated fresh each run from that ServiceAccount's token Secret — not the
-# runner's admin config. Verified for real (not assumed) against a live
-# cluster: see infra/k8s/rbac/rag-platform-api/dev/role.yaml for what that
-# Role actually needed to make `helm upgrade --wait` work end to end.
+# GitOps: this workflow no longer runs `helm upgrade` itself. ArgoCD
+# (installed in-cluster, infra/argocd/) watches each environment's branch
+# and auto-syncs — it is the only thing that actually applies changes to
+# the cluster now. This job's job is just to make the change *in git*: bump
+# the image repository/tag in the environment's values.yaml and push, with
+# [skip ci] so that push doesn't re-trigger this same workflow. ArgoCD picks
+# it up from there. Switched from directly running `helm upgrade` because
+# doing both at once (CD applying directly, ArgoCD watching the same
+# resources with selfHeal) makes the two fight each other — whichever
+# doesn't match git gets reverted.
 #
-# Two steps stay on the runner's admin context rather than the scoped
-# identity, deliberately: applying this app's own RBAC (an identity can't
-# grant itself permissions — only a platform-level identity can provision
-# a new app's Role/RoleBinding), and the smoke-test pod (`kubectl run`
-# needs `create` on pods, which can't be resourceNames-scoped — granting
-# it to the app's identity would let it create arbitrary pods, not just
-# its own). Everything else — the deploy itself — uses the scoped identity.
+# The RBAC step still runs (an app's Kubernetes identity is still real
+# infrastructure, still worth having even though it's no longer on the
+# critical path for the actual deploy). The smoke test still uses the
+# runner's admin context, same reasoning as before: `kubectl run` needs
+# unrestricted pod-create.
 
 on:
   workflow_call:
@@ -32,10 +34,6 @@ on:
         description: "Path (relative to repo root) to the environment's Helm values file"
         required: true
         type: string
-      chart_path:
-        required: false
-        type: string
-        default: infra/helm/app-chart
       image_repository:
         required: true
         type: string
@@ -50,6 +48,13 @@ on:
         required: false
         type: string
         default: self-hosted
+      argocd_app:
+        description: "Name of the ArgoCD Application to wait on"
+        required: true
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   deploy:
@@ -57,36 +62,46 @@ jobs:
     environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
 
       - name: Apply app RBAC (ServiceAccount/Role/RoleBinding/token for this app+env)
         run: |
           kubectl config use-context kind-genai-platform-local
           kubectl apply -f "infra/k8s/rbac/${{ inputs.app_name }}/${{ inputs.environment }}/"
 
-      - name: Generate scoped kubeconfig for this app+environment
+      - name: Bump image tag in git (the actual GitOps trigger)
+        run: |
+          sed -i.bak -E "s|^(  repository: ).*|\1${{ inputs.image_repository }}|" "${{ inputs.values_file }}"
+          sed -i.bak -E "s|^(  tag: ).*|\1${{ inputs.image_tag }}|" "${{ inputs.values_file }}"
+          rm -f "${{ inputs.values_file }}.bak"
+          git diff "${{ inputs.values_file }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "${{ inputs.values_file }}"
+          if git diff --cached --quiet; then
+            echo "No change (image already at this tag) — nothing to commit."
+          else
+            git commit -m "deploy(${{ inputs.environment }}): ${{ inputs.app_name }} -> ${{ inputs.image_tag }} [skip ci]"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+      - name: Wait for ArgoCD to sync
         run: |
           kubectl config use-context kind-genai-platform-local
-          python3 infra/scripts/generate-scoped-kubeconfig.py \
-            "${{ inputs.app_name }}" "${{ inputs.environment }}" \
-            "${{ runner.temp }}/scoped-kubeconfig.yaml"
-
-      - name: Helm upgrade --install (scoped identity)
-        env:
-          KUBECONFIG: ${{ runner.temp }}/scoped-kubeconfig.yaml
-        run: |
-          helm upgrade --install "${{ inputs.app_name }}-${{ inputs.environment }}" "${{ inputs.chart_path }}" \
-            --namespace "${{ inputs.environment }}" \
-            --values "${{ inputs.values_file }}" \
-            --set appName="${{ inputs.app_name }}" \
-            --set environment="${{ inputs.environment }}" \
-            --set image.repository="${{ inputs.image_repository }}" \
-            --set image.tag="${{ inputs.image_tag }}" \
-            --wait --timeout 3m
-
-      - name: Rollout status (scoped identity)
-        env:
-          KUBECONFIG: ${{ runner.temp }}/scoped-kubeconfig.yaml
-        run: kubectl rollout status "deployment/${{ inputs.app_name }}-${{ inputs.environment }}" -n "${{ inputs.environment }}"
+          for i in $(seq 1 60); do
+            SYNC=$(kubectl get application ${{ inputs.argocd_app }} -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
+            HEALTH=$(kubectl get application ${{ inputs.argocd_app }} -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
+            echo "sync=$SYNC health=$HEALTH"
+            if [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
+              echo "ArgoCD reports Synced + Healthy."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for ArgoCD to report Synced + Healthy."
+          exit 1
 
       - name: Smoke test
         run: |
@@ -94,7 +109,3 @@ jobs:
           kubectl run "smoke-${{ inputs.app_name }}-${{ inputs.environment }}" \
             --rm -i --restart=Never --image=curlimages/curl -n "${{ inputs.environment }}" -- \
             curl -sf "http://${{ inputs.app_name }}-${{ inputs.environment }}.${{ inputs.environment }}.svc.cluster.local${{ inputs.health_path }}"
-
-      - name: Clean up scoped kubeconfig
-        if: always()
-        run: rm -f "${{ runner.temp }}/scoped-kubeconfig.yaml"

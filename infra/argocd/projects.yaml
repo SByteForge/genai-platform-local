@@ -1,0 +1,55 @@
+# One AppProject per environment — the GitOps-layer equivalent of the
+# per-app Kubernetes RBAC we already built. Where that RBAC scopes "which
+# ServiceAccount can touch what," this scopes "which ArgoCD Application can
+# deploy to what," which matters now that ArgoCD (not the self-hosted
+# runner) is the thing actually applying changes to the cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: dev
+  namespace: argocd
+spec:
+  description: Applications allowed to deploy into the dev namespace only
+  sourceRepos:
+    - "https://github.com/SByteForge/genai-platform-local.git"
+  destinations:
+    - namespace: dev
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: [] # no cluster-scoped resources from this project
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: qa
+  namespace: argocd
+spec:
+  description: Applications allowed to deploy into the qa namespace only
+  sourceRepos:
+    - "https://github.com/SByteForge/genai-platform-local.git"
+  destinations:
+    - namespace: qa
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: prod
+  namespace: argocd
+spec:
+  description: Applications allowed to deploy into the prod namespace only
+  sourceRepos:
+    - "https://github.com/SByteForge/genai-platform-local.git"
+  destinations:
+    - namespace: prod
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

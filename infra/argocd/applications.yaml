@@ -1,0 +1,77 @@
+# One Application per environment. Each watches its own branch (matching
+# the existing dev/qa/main -> dev/qa/prod mapping) and auto-syncs: any
+# change that lands on that branch (a values.yaml edit, an image tag bump)
+# gets applied to the cluster automatically, with no CD step touching the
+# cluster directly anymore. selfHeal means ArgoCD also reverts any manual
+# drift (e.g. a stray kubectl edit) back to what's in git.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rag-platform-api-dev
+  namespace: argocd
+spec:
+  project: dev
+  source:
+    repoURL: "https://github.com/SByteForge/genai-platform-local.git"
+    targetRevision: dev
+    path: infra/helm/app-chart
+    helm:
+      valueFiles:
+        - ../../../deploy/environments/dev/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rag-platform-api-qa
+  namespace: argocd
+spec:
+  project: qa
+  source:
+    repoURL: "https://github.com/SByteForge/genai-platform-local.git"
+    targetRevision: qa
+    path: infra/helm/app-chart
+    helm:
+      valueFiles:
+        - ../../../deploy/environments/qa/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: qa
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: rag-platform-api-prod
+  namespace: argocd
+spec:
+  project: prod
+  source:
+    repoURL: "https://github.com/SByteForge/genai-platform-local.git"
+    targetRevision: main
+    path: infra/helm/app-chart
+    helm:
+      valueFiles:
+        - ../../../deploy/environments/prod/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false

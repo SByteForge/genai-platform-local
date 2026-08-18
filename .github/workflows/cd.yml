@@ -48,3 +48,4 @@ jobs:
       values_file: deploy/environments/${{ needs.resolve-env.outputs.environment }}/values.yaml
       image_repository: ghcr.io/${{ needs.resolve-env.outputs.image_name }}
       image_tag: ${{ needs.resolve-env.outputs.environment }}-${{ github.sha }}
+      argocd_app: rag-platform-api-${{ needs.resolve-env.outputs.environment }}
