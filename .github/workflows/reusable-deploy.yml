@@ -71,6 +71,7 @@ jobs:
           kubectl apply -f "infra/k8s/rbac/${{ inputs.app_name }}/${{ inputs.environment }}/"
 
       - name: Bump image tag in git (the actual GitOps trigger)
+        id: bump
         run: |
           sed -i.bak -E "s|^(  repository: ).*|\1${{ inputs.image_repository }}|" "${{ inputs.values_file }}"
           sed -i.bak -E "s|^(  tag: ).*|\1${{ inputs.image_tag }}|" "${{ inputs.values_file }}"
@@ -86,21 +87,38 @@ jobs:
             git commit -m "deploy(${{ inputs.environment }}): ${{ inputs.app_name }} -> ${{ inputs.image_tag }} [skip ci]"
             git push origin HEAD:${{ github.ref_name }}
           fi
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for ArgoCD to sync
+      - name: Force ArgoCD to refresh against this exact commit
         run: |
           kubectl config use-context kind-genai-platform-local
+          # Without this, ArgoCD's own poll loop can pick up the branch's
+          # earlier state (before this job's commit above landed) and sync
+          # to that first — found live, promoting prod: it briefly deployed
+          # a placeholder tag that was never built. A hard refresh forces
+          # it to re-evaluate right now instead of on its next poll cycle.
+          kubectl -n argocd annotate application ${{ inputs.argocd_app }} argocd.argoproj.io/refresh=hard --overwrite
+
+      - name: Wait for ArgoCD to sync to this exact commit
+        run: |
+          kubectl config use-context kind-genai-platform-local
+          TARGET_REVISION="${{ steps.bump.outputs.revision }}"
           for i in $(seq 1 60); do
+            REVISION=$(kubectl get application ${{ inputs.argocd_app }} -n argocd -o jsonpath='{.status.sync.revision}' 2>/dev/null || echo "")
             SYNC=$(kubectl get application ${{ inputs.argocd_app }} -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "")
             HEALTH=$(kubectl get application ${{ inputs.argocd_app }} -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "")
-            echo "sync=$SYNC health=$HEALTH"
-            if [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
-              echo "ArgoCD reports Synced + Healthy."
+            echo "revision=$REVISION (target=$TARGET_REVISION) sync=$SYNC health=$HEALTH"
+            # Checking sync+health alone isn't enough: that can be true
+            # against a stale, already-synced-and-broken earlier commit.
+            # Only the exact target revision proves this deploy's own
+            # change is what's actually live.
+            if [ "$REVISION" = "$TARGET_REVISION" ] && [ "$SYNC" = "Synced" ] && [ "$HEALTH" = "Healthy" ]; then
+              echo "ArgoCD is synced to this deploy's own commit and healthy."
               exit 0
             fi
             sleep 5
           done
-          echo "Timed out waiting for ArgoCD to report Synced + Healthy."
+          echo "Timed out waiting for ArgoCD to sync to $TARGET_REVISION."
           exit 1
 
       - name: Smoke test
