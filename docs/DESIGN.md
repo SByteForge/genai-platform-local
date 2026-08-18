@@ -36,19 +36,23 @@ real, running system — not diagrammed and left there.
 
 ## Non-goals
 
-GitOps (ArgoCD/Flux), a service mesh, full enterprise IAM simulation, and a
-CNI that enforces `NetworkPolicy` were all explicitly deferred. Each is a
-legitimate future extension with a clear seam to add it — none was worth
-the added complexity for what this project needed to prove first. See
-[Known limitations](#known-limitations--accepted-gaps).
+A service mesh, full enterprise IAM simulation, and a CNI that enforces
+`NetworkPolicy` are explicitly deferred. Each is a legitimate future
+extension with a clear seam to add it — none was worth the added complexity
+for what this project needed to prove first. GitOps (ArgoCD) was originally
+on this list too, deferred for the same reason — it was added later, once
+CI/CD directly running `helm upgrade` stopped being the right shape for a
+platform meant to host more than one application; see the decision below.
+See [Known limitations](#known-limitations--accepted-gaps).
 
 ## Architecture
 
 ```
-GitHub (CI hosted runner, CD dispatches to self-hosted runner)
+GitHub (CI + CD on hosted runner; CD only builds an image and bumps git)
         │
         ▼
 kind cluster: genai-platform-local
+├── argocd namespace (watches git, applies changes — CI/CD never touches the cluster)
 ├── platform namespace (raw manifests, not Helm)
 │     ├── LocalStack   — S3, DynamoDB
 │     └── Ollama        — in-cluster, real local LLM inference (llama3.2:1b)
@@ -122,10 +126,25 @@ namespace boundaries alone couldn't isolate app-a from app-b. Kubernetes
 `Role` objects can restrict specific verbs to specific object names via
 `resourceNames` — this rides on the existing Helm release naming convention
 (`<app>-<environment>`) with zero architecture change. What this doesn't
-fully close is documented in the two debugging stories below, found by
-actually testing it, not by assumption.
+fully close is documented in the war stories below, found by actually
+testing it, not by assumption.
 
-## War stories: two real bugs found by testing, not review
+**Switching to GitOps (ArgoCD) once a second consumer became real.** CD
+originally ran `helm upgrade` directly from the self-hosted runner. That
+was fine for one app, one maintainer — it stopped being the right shape the
+moment this platform's actual purpose (other applications deploying onto
+it) became concrete. A push-based pipeline has no source of truth for
+"what should be running" other than whatever the last CI run happened to
+do; a second app, or a second person, has no way to see or reconcile
+drift. Installed ArgoCD in-cluster instead: CD's job shrank to "build an
+image, bump its tag in git," and ArgoCD — watching each environment's
+branch — became the only thing that actually applies changes to the
+cluster, with `selfHeal` correcting any manual drift automatically. One
+`AppProject` per environment scopes which `Application` can deploy where,
+the GitOps-layer equivalent of the Kubernetes RBAC already built. Real
+cost, found live rather than assumed: see war story 3.
+
+## War stories: real bugs found by testing, not review
 
 **1. `resourceNames` silently breaks `list`/`watch`.** The first RBAC Role
 scoped every verb — `get, list, watch, create, update, patch, delete` — to
@@ -159,6 +178,27 @@ Both fixes were verified by running a full `helm upgrade --wait` using
 *only* the scoped `ServiceAccount`'s token — no admin credentials — against
 the live cluster, before wiring either into the CI/CD pipeline.
 
+**3. The CD → ArgoCD sync race.** The first version of the ArgoCD-based
+pipeline checked `status.sync.status == Synced` and
+`status.health.status == Healthy` before declaring a deploy successful.
+Promoting to `prod` for the first time, this passed — while `prod` was
+actually running an image that had never been built (`ImagePullBackOff` on
+all 3 pods). Root cause: the merge that promoted the branch changed
+`values.yaml` immediately, days before CD's own tag-bump commit landed a
+few seconds later; ArgoCD's independent poll loop reconciled against that
+intermediate, broken state first and reported it as `Synced`/`Healthy`
+*for that commit* — a state which genuinely satisfied the check, just not
+against the commit this deploy actually intended. `Synced`+`Healthy` alone
+can't distinguish "healthy at the state I just pushed" from "healthy at
+some earlier state that happens to still parse." Fixed by capturing the
+exact commit SHA the bump step pushed, forcing an immediate
+`argocd.argoproj.io/refresh=hard` instead of waiting for ArgoCD's normal
+poll interval, and requiring `status.sync.revision` to equal that exact
+SHA before accepting `Synced`+`Healthy` as real. First recovered manually
+in `prod` (a forced refresh + manual revision check) before the fix
+existed; re-ran the promotion afterward and it passed cleanly, unattended,
+with the revision verified to match end to end.
+
 ## Known limitations / accepted gaps
 
 | Gap | Why it's accepted |
@@ -186,8 +226,11 @@ the live cluster, before wiring either into the CI/CD pipeline.
 
 - `kubectl auth can-i` proving RBAC denies cross-namespace and
   cross-`platform` access
-- Full CI → GHCR (multi-platform) → self-hosted runner → Helm deploy,
-  watched end to end through GitHub Actions logs
+- Full CI → GHCR (multi-platform) → git tag bump → ArgoCD sync → Helm
+  deploy, watched end to end through GitHub Actions logs and `kubectl`
+- ArgoCD's `status.sync.revision` matching the exact commit CD pushed
+  matching the exact image tag on the running pod matching `git log` —
+  checked three ways, not just trusted as "green"
 - The app answering real questions through Ollama, grounded in documents
   stored in LocalStack's DynamoDB, via the Swagger UI
 - `helm upgrade --wait` succeeding using only each app's scoped identity,
