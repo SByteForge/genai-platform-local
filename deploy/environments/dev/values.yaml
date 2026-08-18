@@ -2,8 +2,8 @@ appName: rag-platform-api
 environment: dev
 
 image:
-  repository: rag-platform-api
-  tag: local
+  repository: ghcr.io/sbyteforge/genai-platform-local
+  tag: dev-7d419ad63390b172cff080a7bd265d4042de3308
   pullPolicy: IfNotPresent
 
 replicaCount: 1
