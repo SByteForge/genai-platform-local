@@ -5,12 +5,13 @@ agentic, and voice AI applications — without a cloud account or a cloud bill.
 
 One `kind` Kubernetes cluster on a single machine reproduces the shape of a
 real platform: isolated `dev`/`qa`/`prod` environments, shared backing
-services, least-privilege RBAC, and a GitHub Actions CI/CD pipeline that
-builds, pushes, and deploys an immutable image per commit.
+services, least-privilege RBAC, and a real GitOps pipeline — GitHub Actions
+builds and pushes an image, ArgoCD is what actually applies it to the
+cluster.
 
 📄 **[Read the design doc](docs/DESIGN.md)** — architecture decisions,
-alternatives considered, and two real bugs found by testing this against a
-live cluster (not just written and assumed correct).
+alternatives considered, and real bugs found by testing this against a live
+cluster (not just written and assumed correct).
 
 ## Why this exists
 
@@ -24,20 +25,19 @@ access, and a real deploy pipeline. The reference application included
 ## Architecture
 
 ```
-                         GitHub
-                            │
-              ┌─────────────┼─────────────┐
-              │             │             │
-         CI workflow   CD workflow    (future app repos
-        (hosted runner) (dispatches    register here too)
-              │          to runner)
-              │             │
-              ▼             ▼
-            GHCR      self-hosted runner
-        (image store)   (this machine)
+GitHub
+   │
+   ├── CI workflow (hosted runner): lint, test, build
+   └── CD workflow (hosted runner): build image → push to GHCR
+              → bump the image tag in this repo's git (the actual trigger)
                             │
                             ▼
               kind cluster: genai-platform-local
+              │
+              ├── argocd namespace
+              │     watches dev/qa/main branches, applies any change
+              │     automatically — this is what actually touches the
+              │     cluster now, not CI/CD directly
               │
               ├── platform namespace (raw manifests, not Helm)
               │     ├── LocalStack   — S3, DynamoDB (emulated AWS)
@@ -76,7 +76,8 @@ Host header: `curl -H "Host: dev.api.local" http://localhost:8080/health`.
 | LLM inference | Ollama (in-cluster) | Self-contained — works on a fresh clone, no local Ollama install required |
 | Packaging | Helm | One chart, three environments, values-driven |
 | Governance | Kubernetes RBAC | Per-app, per-environment least privilege — see below |
-| CI/CD | GitHub Actions | Hosted runner builds/tests/pushes; self-hosted runner deploys locally |
+| CI | GitHub Actions (hosted runner) | Lint, test, build, push an immutable image to GHCR |
+| CD → deploy | ArgoCD (in-cluster) | Watches git, applies automatically — CI never touches the cluster directly |
 | Ingress | ingress-nginx | Host-based routing (`dev/qa/prod.api.local`) to each environment |
 | Autoscaling data | metrics-server | Gives the HPAs real CPU data (`kind` doesn't ship this by default) |
 
@@ -103,8 +104,11 @@ Repository → ServiceAccount → Role (namespace-scoped, resourceNames-restrict
 - `infra/registry/<app>.yaml` is the source of truth for what an app is
   approved to touch (environments, DynamoDB tables, Ollama access).
 - `infra/k8s/rbac/<app>/<env>/` holds that app's `ServiceAccount`/`Role`/
-  `RoleBinding` for that one environment — scoped by `resourceNames` to only
-  the objects that app's own Helm release creates.
+  `RoleBinding`/token `Secret` for that one environment — scoped by
+  `resourceNames` to only the objects that app's own Helm release creates.
+- `infra/argocd/projects.yaml` scopes which ArgoCD `Application` can deploy
+  to which namespace — the GitOps-layer equivalent of the RBAC above, since
+  ArgoCD is what actually applies changes to the cluster now.
 - The `platform` namespace has its own RBAC; no application's identity is
   ever bound there. Verified live:
 
@@ -118,78 +122,117 @@ Repository → ServiceAccount → Role (namespace-scoped, resourceNames-restrict
   ```
 
 Known, documented gaps (not oversights — see inline comments at each
-location): the CD workflow currently deploys with the runner's own
-kubeconfig rather than each app's scoped token; Helm's own release-tracking
-Secrets can't be `resourceNames`-scoped because their names are
-revision-numbered; the `NetworkPolicy` for LocalStack is written correctly
-but inert under `kind`'s default CNI, which doesn't enforce `NetworkPolicy`.
+location): `create` can't be `resourceNames`-scoped (a Kubernetes RBAC
+limitation, not this platform's choice — closing it fully needs an
+admission controller); Helm's own release-tracking Secrets can't be
+`resourceNames`-scoped either, since their names are revision-numbered; the
+`NetworkPolicy` for LocalStack is written correctly but inert under `kind`'s
+default CNI, which doesn't enforce `NetworkPolicy`.
 
-## CI/CD
+## CI/CD (GitOps via ArgoCD)
 
 ```
 push to dev/qa/main
   → CI: lint, test, build (GitHub-hosted runner)
   → CD: build immutable image (ghcr.io/.../<env>-<sha>, never `latest`) → push to GHCR
-  → CD: self-hosted runner (this machine) → helm upgrade → kind cluster
+  → CD: bump that tag into deploy/environments/<env>/values.yaml, commit, push [skip ci]
+  → ArgoCD (in-cluster): detects the change, applies it, self-heals any drift
+  → CD: waits for ArgoCD to report Synced at that exact commit + Healthy, then smoke-tests
 ```
 
+CD does **not** run `helm upgrade` itself — it only ever changes git. ArgoCD
+is the only thing that touches the cluster for a deploy. Running `helm
+upgrade` directly (e.g. by hand, for local testing) will fight ArgoCD's
+`selfHeal` — whichever doesn't match git gets reverted. See
+[Local development](#local-development-without-ci) below for the safe way
+to test changes before pushing.
+
 Branch → environment mapping: `dev`→`dev`, `qa`→`qa`, `main`→`prod`. A
-self-hosted runner is required because GitHub-hosted runners cannot reach a
-cluster that only exists on this machine.
+self-hosted runner is required for CI/CD to run at all, since GitHub-hosted
+runners can't reach a cluster or a `git push` target that only exists on
+this machine — but the runner never touches the cluster's actual state; it
+only builds images and pushes git commits. ArgoCD is the only in-cluster
+component with deploy access.
 
 ## Quickstart
 
 ```bash
 brew install kind helm kubectl
 
-# 1. Stand up the cluster + shared platform services
+# 1. Stand up the cluster + shared platform services + ArgoCD
 python3 infra/scripts/setup-cluster.py
+kubectl apply -f infra/argocd/projects.yaml
+kubectl apply -f infra/argocd/applications.yaml
 
-# 2. Build the app image and load it into the cluster
+# 2. Register a self-hosted GitHub Actions runner on this machine
+#    (Settings → Actions → Runners → New self-hosted runner)
+
+# 3. Push to dev/qa/main — CI/CD + ArgoCD take it from here
+git push origin dev
+```
+
+There is no manual deploy step — once ArgoCD's `Application`s exist, every
+push to `dev`/`qa`/`main` flows through CI/CD into a real, GitOps-managed
+deployment automatically.
+
+### Local development, without CI
+
+To test a change to the app or chart before pushing:
+
+```bash
 docker build -t rag-platform-api:local .
 kind load docker-image rag-platform-api:local --name genai-platform-local
-
-# 3. Apply this app's RBAC, then deploy it to dev
-kubectl apply -f infra/k8s/rbac/rag-platform-api/dev/
-helm upgrade --install rag-platform-api-dev infra/helm/app-chart \
-  -n dev --values deploy/environments/dev/values.yaml --wait
-
-# 4. Try it
-kubectl port-forward -n dev svc/rag-platform-api-dev 8000:80
-open http://localhost:8000/docs
+helm template infra/helm/app-chart -f deploy/environments/dev/values.yaml   # render only, no cluster touched
 ```
+
+Don't run `helm upgrade` against the cluster directly while ArgoCD is
+watching that namespace — it will be reverted. To genuinely bypass ArgoCD
+for local iteration, pause the `Application` first:
+`kubectl patch application rag-platform-api-dev -n argocd --type merge -p '{"spec":{"syncPolicy":null}}'`,
+then resume it (re-apply `infra/argocd/applications.yaml`) when done.
+
+## Onboarding another application
+
+Any app can consume this platform's shared LocalStack/Ollama and its CI/CD
+patterns without forking it:
+
+1. **Register it**: add `infra/registry/<app>.yaml` in this repo, declaring
+   which environments and platform resources (DynamoDB tables, S3 prefixes,
+   Ollama access) it's approved to use.
+2. **Provision its identity**: add `infra/k8s/rbac/<app>/<env>/` (copy the
+   `rag-platform-api` folders as a template) — `ServiceAccount`, `Role`,
+   `RoleBinding`, token `Secret`, scoped the same way.
+3. **Give it an ArgoCD `Application`**: add an entry to
+   `infra/argocd/applications.yaml` (and an `AppProject` in `projects.yaml`
+   if it needs a namespace that doesn't already have one) pointing at the
+   new app's own chart/values.
+4. **In the new app's own repo**, reuse this platform's CI/CD instead of
+   writing new workflows:
+   ```yaml
+   uses: SByteForge/genai-platform-local/.github/workflows/reusable-build-push.yml@main
+   ```
+   Its own `values.yaml` sets `AWS_ENDPOINT_URL`/`OLLAMA_URL` to this
+   platform's shared services, same as `rag-platform-api` does.
+5. The new app's CD only needs to build and push an image and bump its own
+   `values.yaml` tag — the same self-hosted runner (registered once, on the
+   machine running the cluster) can serve multiple app repos.
 
 ## Repository layout
 
 ```
 app/                          reference application (FastAPI + boto3 + Ollama)
+docs/                          design doc — decisions, alternatives, real bugs found
 infra/
   kind/                       kind cluster definition
   k8s/                        namespaces, platform services, RBAC, NetworkPolicy
   helm/app-chart/             reusable chart — any stateless HTTP app can use it
+  argocd/                     AppProjects + Applications — GitOps deploy config
   registry/                   governance source of truth, one file per app
   scripts/                    cluster bootstrap
 deploy/environments/          per-environment Helm values (dev/qa/prod)
 .github/workflows/            CI, CD, and reusable workflows other app repos can call
 ```
 
-## Status
-
-`dev` and `qa` are fully built and verified live end to end: cluster,
-platform services, Helm chart, RBAC (proven with `kubectl auth can-i`),
-Ingress, autoscaling with real metrics, and a working CI/CD pipeline —
-push → GitHub Actions CI → multi-platform image → GHCR → self-hosted
-runner → Helm → running pod, all actually exercised, not just written.
-
-Not yet done: `main`/`prod` hasn't been promoted (deliberately held for one
-combined release); branch protection rules on `qa`/`main` aren't configured;
-the CD workflow still deploys using the self-hosted runner's own kubeconfig
-rather than each app's scoped `ServiceAccount` token (documented in
-`reusable-deploy.yml`); `NetworkPolicy` is written but inert under `kind`'s
-default CNI. None of these block current functionality — they're the
-explicit remaining work before calling this enterprise-complete.
-
 ## License
 
 MIT — see [LICENSE](LICENSE).
-# trigger test 1787039185
