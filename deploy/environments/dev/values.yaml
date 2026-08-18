@@ -3,7 +3,7 @@ environment: dev
 
 image:
   repository: ghcr.io/sbyteforge/genai-platform-local
-  tag: dev-88799bd908d1d3d3f631744b5141e22d4399f59a
+  tag: dev-e6af59a36576cf3bc2d4c1cb86944dd3bf48ebf1
   pullPolicy: IfNotPresent
 
 replicaCount: 1
