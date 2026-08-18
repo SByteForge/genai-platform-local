@@ -52,7 +52,7 @@ GitHub (CI hosted runner, CD dispatches to self-hosted runner)
 kind cluster: genai-platform-local
 ├── platform namespace (raw manifests, not Helm)
 │     ├── LocalStack   — S3, DynamoDB
-│     └── Ollama        — passthrough to host, real local LLM inference
+│     └── Ollama        — in-cluster, real local LLM inference (llama3.2:1b)
 ├── dev namespace   (Helm, 1 replica)
 ├── qa namespace    (Helm, 2 replicas, HPA 2-4)
 └── prod namespace  (Helm, 3 replicas, HPA 3-8)
@@ -71,14 +71,38 @@ Cost: a bug in the shared LocalStack instance affects every environment
 simultaneously — accepted, since the alternative (three LocalStack copies)
 would misrepresent how production actually works.
 
-**Ollama: host passthrough vs. in-cluster.** Originally designed in-cluster
-(its own Deployment + PVC), until it became clear the developer already had
-models pulled locally — running a second copy would re-download
-multi-gigabyte models for no benefit. Switched to a Kubernetes
-`ExternalName` Service forwarding to `host.docker.internal`. Apps still
-resolve `ollama.platform.svc.cluster.local` exactly as before — nothing
-downstream changed — but the cluster now depends on a process running
-outside it. Documented tradeoff, not a silent one.
+**Ollama: in-cluster, reversed once, back again.** Originally in-cluster
+(Deployment + PVC), then switched to a Kubernetes `ExternalName` Service
+forwarding to `host.docker.internal`, once it became clear the developer
+already had models pulled locally and a second copy would re-download
+several gigabytes for no benefit. Reversed back to in-cluster once the
+actual goal was named explicitly: this repo exists partly to be cloned and
+run by other people, and requiring them to pre-install Ollama locally
+defeats that. Both directions kept the same DNS name
+(`ollama.platform.svc.cluster.local`) and required zero app-level changes —
+only the platform manifest changed either time, which is exactly what that
+DNS indirection is for.
+
+Reversing it surfaced two more real problems, not assumed ones:
+
+- The default model (`mistral`, 7B) `OOMKilled` repeatedly — Docker
+  Desktop's whole VM has 7.7GB total, shared with everything else in the
+  cluster, and `mistral` needs more than that to actually run inference,
+  not just load. Bumping the memory limit would have just pushed the OOM up
+  a level. Real fix: a small model (`llama3.2:1b`, 1.3GB) that fits the
+  constraint this platform is designed to run under, with the Deployment's
+  resources right-sized to match. Stated plainly: `llama3.2:1b` is
+  noticeably weaker than `mistral` at following "answer using only this
+  context" instructions — that's the real cost of the portability win, not
+  a hidden one.
+- The pull `Job` reported `Complete` on a download that had actually failed
+  partway through (a TLS handshake timeout reaching Ollama's registry,
+  visible in the job's own logs) — because `curl -f` only checks the HTTP
+  status code, and Ollama's pull API streams `200 OK` the entire time,
+  reporting errors *inside* the JSON body instead. Fixed by checking the
+  last streamed line for `{"status":"success"}` explicitly and failing the
+  Job otherwise — confirmed live, both for a real success and a forced
+  failure.
 
 **Helm for the app, raw manifests for the platform.** The app's shape
 genuinely differs per environment (replicas, resources, image tag) — that's
@@ -169,3 +193,10 @@ the live cluster, before wiring either into the CI/CD pipeline.
   stored in LocalStack's DynamoDB, via the Swagger UI
 - `helm upgrade --wait` succeeding using only each app's scoped identity,
   proven before that identity was wired into CI
+- The in-cluster Ollama pod's actual memory usage under a real inference
+  request (not just at idle) before and after the model-size fix —
+  `OOMKilled`/`Exit Code: 137` on `mistral`, stable at ~1.9GB on
+  `llama3.2:1b`
+- A forced failure of the pull `Job`'s new success check, to confirm it
+  actually fails loudly instead of reporting false positives like the
+  version it replaced

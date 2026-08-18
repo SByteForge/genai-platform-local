@@ -41,7 +41,7 @@ access, and a real deploy pipeline. The reference application included
               │
               ├── platform namespace (raw manifests, not Helm)
               │     ├── LocalStack   — S3, DynamoDB (emulated AWS)
-              │     └── Ollama       — passthrough to host, real local LLM
+              │     └── Ollama       — in-cluster, real local LLM inference
               │
               ├── dev namespace   (Helm, 1 replica)
               ├── qa namespace    (Helm, 2 replicas, HPA 2-4)
@@ -73,7 +73,7 @@ Host header: `curl -H "Host: dev.api.local" http://localhost:8080/health`.
 |---|---|---|
 | Orchestration | `kind` (Kubernetes-in-Docker) | Real Kubernetes API, zero cloud dependency |
 | AWS emulation | LocalStack (S3, DynamoDB) | Free-tier AWS-compatible services, in-cluster |
-| LLM inference | Ollama (host passthrough) | Reuses locally-installed models, no duplicate downloads |
+| LLM inference | Ollama (in-cluster) | Self-contained — works on a fresh clone, no local Ollama install required |
 | Packaging | Helm | One chart, three environments, values-driven |
 | Governance | Kubernetes RBAC | Per-app, per-environment least privilege — see below |
 | CI/CD | GitHub Actions | Hosted runner builds/tests/pushes; self-hosted runner deploys locally |
