@@ -1,0 +1,36 @@
+# One-shot: pulls the default model into the ollama-models PVC. Re-run with:
+#   kubectl delete job ollama-pull-model -n platform && kubectl apply -f this file
+#
+# The pull API streams progress as newline-delimited JSON over a 200 OK
+# response — a transient failure partway through (found live: a TLS
+# handshake timeout mid-download) shows up as an "error" field inside that
+# stream, not as a non-2xx status. `curl -f` alone can't see that, so it
+# reported the Job "Complete" even though the model never actually finished
+# downloading. Checking the last line for {"status":"success"} explicitly
+# is what actually verifies the pull worked.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-pull-model
+  namespace: platform
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: pull
+          image: curlimages/curl
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              OUTPUT=$(curl -sf http://ollama:11434/api/pull \
+                -H 'Content-Type: application/json' \
+                -d '{"name": "llama3.2:1b"}')
+              echo "$OUTPUT" | tail -5
+              echo "$OUTPUT" | tail -1 | grep -q '"status":"success"' || {
+                echo "PULL DID NOT REACH success STATUS — treating as failed"
+                exit 1
+              }

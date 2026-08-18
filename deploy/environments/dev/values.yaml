@@ -36,7 +36,7 @@ env:
   - name: OLLAMA_URL
     value: "http://ollama.platform.svc.cluster.local:11434"
   - name: OLLAMA_MODEL
-    value: "mistral"
+    value: "llama3.2:1b"
 
 tableInit:
   enabled: true

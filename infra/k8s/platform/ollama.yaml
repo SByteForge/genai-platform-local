@@ -1,11 +1,73 @@
+# Ollama runs in-cluster (not a host passthrough) so this platform is fully
+# self-contained — anyone cloning this repo gets a working LLM without
+# installing Ollama locally first. Models persist on a PVC (backed by
+# kind's default local-path-provisioner) so a pod restart doesn't force a
+# multi-gigabyte re-download.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: platform
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: { storage: 10Gi }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: platform
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: genai-platform-local
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single ReadWriteOnce volume
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama
+        app.kubernetes.io/part-of: genai-platform-local
+    spec:
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          ports:
+            - name: api
+              containerPort: 11434
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { cpu: 2, memory: 2Gi } # sized for a small model (llama3.2:1b) — see ollama-pull-model.yaml
+          readinessProbe:
+            httpGet: { path: /, port: 11434 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: 11434 }
+            initialDelaySeconds: 20
+            periodSeconds: 20
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+---
 apiVersion: v1
 kind: Service
 metadata:
   name: ollama
   namespace: platform
 spec:
-  type: ExternalName
-  externalName: host.docker.internal
+  selector:
+    app.kubernetes.io/name: ollama
   ports:
     - name: api
       port: 11434
+      targetPort: 11434

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Phase 1 + 2: local kind cluster, namespaces, LocalStack, and a
-passthrough Service to your host's Ollama. Idempotent — safe to re-run."""
+"""Phase 1 + 2: local kind cluster, namespaces, LocalStack, and an in-cluster
+Ollama (fully self-contained — no local Ollama install required). Idempotent
+— safe to re-run."""
 
 import shutil
 import subprocess
 import sys
-import urllib.request
 from pathlib import Path
 
 CLUSTER_NAME = "genai-platform-local"
@@ -44,7 +44,7 @@ def apply_manifests() -> None:
     print("Applying namespaces...")
     run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "00-namespaces.yaml"))
 
-    print("Applying platform services (LocalStack, host-Ollama passthrough)...")
+    print("Applying platform services (LocalStack, in-cluster Ollama)...")
     run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "localstack.yaml"))
     run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "ollama.yaml"))
     run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "networkpolicy.yaml"))
@@ -56,6 +56,19 @@ def apply_manifests() -> None:
     run(
         "kubectl", "rollout", "status", "deployment/localstack",
         "-n", "platform", "--timeout=420s",
+    )
+
+    print("Waiting for Ollama to be ready...")
+    run(
+        "kubectl", "rollout", "status", "deployment/ollama",
+        "-n", "platform", "--timeout=300s",
+    )
+
+    print("Pulling default Ollama model (mistral, ~4.4GB — first run only, can take a while)...")
+    run("kubectl", "apply", "-f", str(INFRA_DIR / "k8s" / "platform" / "ollama-pull-model.yaml"))
+    run(
+        "kubectl", "wait", "--for=condition=complete", "job/ollama-pull-model",
+        "-n", "platform", "--timeout=1200s", check=False,
     )
 
 
@@ -89,18 +102,6 @@ def install_ingress_nginx() -> None:
     )
 
 
-def check_host_ollama() -> None:
-    print("Checking host Ollama is reachable...")
-    try:
-        with urllib.request.urlopen("http://localhost:11434/api/tags", timeout=5):
-            print("Host Ollama OK")
-    except Exception:
-        print(
-            "WARNING: host Ollama not reachable on :11434 "
-            "— start it before deploying apps that call it"
-        )
-
-
 def main() -> None:
     require_tool("kind")
     require_tool("kubectl")
@@ -109,11 +110,10 @@ def main() -> None:
     apply_manifests()
     install_metrics_server()
     install_ingress_nginx()
-    check_host_ollama()
 
     print(
         f"Done. Cluster '{CLUSTER_NAME}' ready: "
-        "namespaces platform/dev/qa/prod, LocalStack + Ollama, "
+        "namespaces platform/dev/qa/prod, LocalStack + Ollama (in-cluster), "
         "metrics-server, and ingress-nginx up."
     )
 

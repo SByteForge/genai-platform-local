@@ -10,7 +10,7 @@ app = FastAPI(title="RAG Platform API")
 AWS_ENDPOINT_URL = os.getenv("AWS_ENDPOINT_URL", "http://localhost:4566")
 TABLE_NAME = os.getenv("TABLE_NAME", "documents")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "mistral")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
 
 dynamodb = boto3.resource(
     "dynamodb",
