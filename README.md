@@ -95,6 +95,12 @@ so environments can never read or overwrite each other's data.
 
 ## Governance model
 
+The pattern below is implemented here, and also written up as a
+standalone, platform-agnostic reference in
+[k8s-privilege-engine](https://github.com/SByteForge/k8s-privilege-engine)
+— useful if you want the governance model on its own, without the rest of
+this platform.
+
 Every application gets a scoped identity, not cluster-admin:
 
 ```
