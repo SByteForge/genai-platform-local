@@ -3,7 +3,7 @@ environment: qa
 
 image:
   repository: ghcr.io/sbyteforge/genai-platform-local
-  tag: qa-e7e97b9d25275586b0b0492d003c75582f465509
+  tag: qa-14a2a056891ef81eb11af6bc3c2d3d1a6e7f1f95
   pullPolicy: IfNotPresent
 
 replicaCount: 2
