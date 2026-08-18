@@ -1,6 +1,5 @@
 # Design Document: genai-platform-local
 
-**Status:** dev/qa live and verified; prod pending one combined release.
 **Repo:** https://github.com/SByteForge/genai-platform-local
 
 ## Summary
